@@ -1,6 +1,6 @@
 {
   "name": "opencode-session-reader",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Native OpenCode V2 plugin for cross-session discovery, inspection, and context resumption, inspired by Codex thread architecture.",
   "type": "module",
   "license": "GPL-3.0-or-later",

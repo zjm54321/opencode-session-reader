@@ -27,6 +27,8 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
+      - name: Install modern npm tooling supporting OIDC Trusted Publishing
+        run: npm install --global npm@11.15.0 --ignore-scripts --no-audit --no-fund
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
