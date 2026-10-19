@@ -1,7 +1,15 @@
 import { test, expect } from "bun:test";
 import plugin from "../src/index.js";
+import { readServiceConfig } from "../src/client.js";
 
-test("live integration with OpenCode background service", async () => {
+let serviceAvailable = false;
+try {
+  const config = await readServiceConfig();
+  const res = await fetch(`http://127.0.0.1:${config.port}/api/info`);
+  serviceAvailable = res.ok;
+} catch {}
+
+test.skipIf(!serviceAvailable)("live integration with OpenCode background service", async () => {
   const tools: Record<string, any> = {};
 
   const mockCtx = {

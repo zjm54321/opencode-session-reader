@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Plugin } from "@opencode/plugin";
 import { z } from "zod";
 import { OpenCodeClient } from "./client.js";
