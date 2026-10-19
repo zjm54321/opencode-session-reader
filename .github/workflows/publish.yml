@@ -27,7 +27,6 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
-          registry-url: 'https://registry.npmjs.org/'
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
@@ -52,4 +51,6 @@ jobs:
       - name: Dry-run pack verification
         run: npm pack --dry-run --ignore-scripts
       - name: Publish to npm using Trusted Publishing
-        run: npm publish --access public --provenance --ignore-scripts
+        run: |
+          unset NODE_AUTH_TOKEN NPM_TOKEN
+          npm publish --access public --provenance --ignore-scripts
