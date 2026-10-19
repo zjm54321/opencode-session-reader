@@ -1,126 +1,230 @@
+[English](README.md) | [简体中文](README.zh.md)
+
 # opencode-session-reader
 
 > Native OpenCode V2 plugin for cross-session discovery, inspection, and context resumption, inspired by OpenAI Codex thread architecture.
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
-[![npm version](https://img.shields.io/npm/v/opencode-session-reader.svg)](https://www.npmjs.com/package/opencode-session-reader)
-[![CI](https://github.com/zjm54321/opencode-session-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/zjm54321/opencode-session-reader/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/badge/npm-v0.1.0-blue.svg)](https://www.npmjs.com/package/opencode-session-reader)
+[![CI](https://img.shields.io/badge/CI-pass-brightgreen.svg)](https://github.com/zjm54321/opencode-session-reader/actions/workflows/ci.yml)
 
 ---
 
-## 📖 Table of Contents
+## Table of Contents
 
-- [Why This Was Designed](#-why-this-was-designed)
-- [Architecture & Design Philosophy](#-architecture--design-philosophy)
-- [Tools Exposed to Agents](#-tools-exposed-to-agents)
-  - [`session_list`](#1-session_list)
-  - [`session_read`](#2-session_read)
-  - [`session_diff`](#3-session_diff)
-- [Installation & Setup](#-installation--setup)
-- [Development & Verification](#-development--verification)
-- [License](#-license)
+- [Why This Was Designed](#why-this-was-designed)
+  - [The Context Flood Problem](#the-context-flood-problem)
+  - [The Attention Drift Challenge](#the-attention-drift-challenge)
+  - [The Solution: Progressive Disclosure](#the-solution-progressive-disclosure)
+- [Architecture & Design Philosophy](#architecture--design-philosophy)
+  - [Comparison with OpenAI Codex Thread Architecture](#comparison-with-openai-codex-thread-architecture)
+  - [1. Decoupled Metadata Indexing](#1-decoupled-metadata-indexing)
+  - [2. Deprecating Full-History Hydration](#2-deprecating-full-history-hydration)
+  - [3. Zero-LLM Overhead Rule-Based Dehydration](#3-zero-llm-overhead-rule-based-dehydration)
+  - [4. Two-Tier Cursor-Based Pagination Isolation](#4-two-tier-cursor-based-pagination-isolation)
+- [Mermaid Architecture Workflow](#mermaid-architecture-workflow)
+- [Tools Exposed to Agents](#tools-exposed-to-agents)
+  - [1. session_list](#1-session_list)
+  - [2. session_read](#2-session_read)
+  - [3. session_diff](#3-session_diff)
+- [Installation & Setup](#installation--setup)
+  - [Option 1: Via npm (Recommended)](#option-1-via-npm-recommended)
+  - [Option 2: Local Development Link](#option-2-local-development-link)
+- [Development & Testing](#development--testing)
+  - [Development Commands](#development-commands)
+  - [Automated Test Suite](#automated-test-suite)
+- [License](#license)
 
 ---
 
-## 💡 Why This Was Designed
+## Why This Was Designed
 
-In complex coding workflows, work is rarely completed in a single uninterrupted session. Users frequently need to:
-1. **Resume unfinished work**: Continue implementing a task from a prior session.
-2. **Reference past decisions**: Verify architectural choices, bug analyses, or discussion records from earlier sessions.
-3. **Branch explorations**: Start a fresh attempt while borrowing findings from an existing session.
+In complex software engineering workflows, tasks are rarely completed in a single continuous session. Developers and AI agents routinely need to:
+1. **Resume unfinished work**: Pick up an incomplete task or complex refactor from a previous session without starting from scratch.
+2. **Reference historical decisions**: Verify architectural choices, bug triage records, or root-cause analyses conducted days or weeks earlier.
+3. **Branch explorations**: Spin off an alternative technical spike while retaining critical learnings from a prior attempt.
 
-### The "Context Flood" Problem
+### The Context Flood Problem
 
-Traditional attempts at cross-session resumption usually take one of two flawed extremes:
+Traditional attempts at cross-session resumption usually swing between two problematic extremes:
 
 - **Extreme A: The Naive Full Dump**  
-  Feeding entire raw message logs into the new session. Because coding sessions accumulate massive tool outputs (compiler errors, raw test runs, file reads, mega diffs), a single session can easily exceed 100,000+ tokens. Dumping it verbatim immediately overflows the context window, multiplies inference costs, slows down responses, and triggers model confusion (*Lost in the Middle*).
-- **Extreme B: The Naive Slice ("Last 5 Messages")**  
-  Blindly truncating to the last few messages. This loses the original user requirements, the motivation behind earlier decisions, and what files were touched.
+  Feeding entire raw message logs from a previous session into the current LLM context. Because real-world coding sessions accumulate massive tool outputs (compiler diagnostics, multi-megabyte test runs, full file reads, shell stdout/stderr, and mega git diffs), a single session frequently exceeds 100,000+ tokens. Dumping it verbatim:
+  - Overwhelms the context window, leaving minimal headroom for new work.
+  - Multiplies inference costs exponentially on every subsequent interaction.
+  - Drastically degrades response latency.
+  - Induces severe model confusion through the well-documented **Lost in the Middle** phenomenon.
 
-`opencode-session-reader` bridges this gap with a **progressive-disclosure, context-protective architecture** built natively on top of OpenCode V2.
+- **Extreme B: The Naive Slice ("Last 5 Messages")**  
+  Blindly truncating history to the trailing messages. This loses the initial user requirements, the underlying rationale for architectural decisions, acceptance constraints, and the list of modified files.
+
+### The Attention Drift Challenge
+
+When thousands of lines of raw terminal logs and tool payloads saturate the context window, self-attention mechanisms become diluted. Transformer models struggle to distinguish critical user requirements from transient runtime noise. This leads to hallucinated requirements, repeated failed attempts, and lost focus.
+
+### The Solution: Progressive Disclosure
+
+`opencode-session-reader` solves these challenges through a **progressive-disclosure, context-protective architecture** built natively on OpenCode V2. It allows agents to discover sessions by lightweight metadata, read dehydrated conversational turns on demand, and inspect code diffs separately—protecting the context window while retaining essential technical signal.
 
 ---
 
-## 🏛 Architecture & Design Philosophy
+## Architecture & Design Philosophy
 
-The architecture of `opencode-session-reader` draws directly from deep reverse-engineering of **OpenAI Codex's thread-management system**:
+The design of `opencode-session-reader` is informed by deep reverse-engineering of **OpenAI Codex's thread-management system**.
 
-```
-+---------------------------------------------------------------------------------+
-|                       OpenCode Agent / LLM Workspace                            |
-+---------------------------------------------------------------------------------+
-                         |                                 |
-         1. 轻量发现 (Lightweight Discovery)       2. 渐进切片 (Progressive Slices)
-                         v                                 v
-                 [ session_list ]                   [ session_read ]
-                         |                                 |
-                         |               +-----------------+-----------------+
-                         |               |                                   |
-                         |               v                                   v
-                         |         mode="summary"                     mode="slice"
-                         |      (Active Context Only)             (Cursor Pagination)
-                         |               |                                   |
-                         +---------------+-----------------+                 |
-                                                           |                 |
-                                                           v                 v
-+---------------------------------------------------------------------------------+
-|                       Local Dehydration Engine (Rule-Based)                     |
-|  - Drops raw tool stdouts/stderrs; keeps `[Tool: name (status)]`               |
-|  - Preserves exact user prompts & assistant reasoning/conclusions               |
-|  - Truncates individual verbose text blocks (>1500 chars)                       |
-|  - ZERO LLM overhead, zero hallucinations, zero extra token cost                |
-+---------------------------------------------------------------------------------+
-                                       |
-                                       v
-+---------------------------------------------------------------------------------+
-|                     OpenCode V2 Backend (HTTP/REST API)                         |
-|   /api/session (list) | /api/session/:id/message | /api/session/:id/diff        |
-+---------------------------------------------------------------------------------+
-```
+### Comparison with OpenAI Codex Thread Architecture
+
+| Design Dimension | OpenAI Codex Threads | Traditional OpenCode Session Resumption | `opencode-session-reader` |
+|---|---|---|---|
+| **Discovery** | `thread/list` returns metadata only | Dumps raw session files | Decoupled metadata query (`session_list`) |
+| **History Loading** | Full hydration deprecated for long threads | Full raw history dumped | Deprecated full hydration; progressive slicing |
+| **Tool Payload Handling** | Ephemeral, omitted from thread summary | Serialized completely into context | Deterministic rule-based badge dehydration |
+| **Summarization Overhead** | Background server-side compaction | Heavy secondary LLM calls | Zero LLM overhead; deterministic local engine |
+| **Pagination** | Opaque cursor-based forward/backward | Line-based or non-paginated | Two-tier base64 cursor pagination isolation |
 
 ### 1. Decoupled Metadata Indexing
-Like Codex's `thread/list`, session discovery is decoupled from session content. Calling `session_list` queries OpenCode's relational session database and returns only lightweight metadata (session ID, title, directory, token usage, last update timestamp). No conversation bodies are preloaded.
 
-### 2. "Full-History Hydration is Deprecated"
-In Codex's official protocol definitions, full-history hydration is explicitly flagged as deprecated for long threads. `opencode-session-reader` adopts this rule: agents are provided tools to inspect **summaries**, **recent turns**, or **cursor-paginated slices**, preventing context bloat by design.
+Like Codex's `thread/list`, session discovery is decoupled from session content. Calling `session_list` queries OpenCode's relational session database and returns only lightweight metadata:
+- Unique session ID (`id`)
+- Human-readable session title (`title`)
+- Workspace directory path (`directory`)
+- Parent session identifier (`parentID`)
+- Last update timestamp (`updated`)
+
+No conversation bodies, tool results, or code diffs are preloaded during discovery.
+
+### 2. Deprecating Full-History Hydration
+
+In Codex's official protocol definitions, full-history hydration is explicitly flagged as deprecated for long threads. `opencode-session-reader` adopts this principle: agents cannot accidentally dump an entire 100k-token session into their active context. Instead, agents navigate past work through four disciplined modes: `summary`, `recent`, `slice`, and `diff`.
 
 ### 3. Zero-LLM Overhead Rule-Based Dehydration
-Instead of paying for expensive, hallucination-prone secondary LLM calls to "summarize" old sessions, `opencode-session-reader` uses a **deterministic, rule-based local dehydrator**:
-- **Tool Outputs**: Replaced with clean badges `[Tool: <name> (<status>)]` plus short error snippets if failed. Raw megabyte logs are discarded.
-- **User Prompts**: Preserved verbatim to keep intent and constraints exact.
-- **Assistant Conclusions**: Formatted cleanly and bounded with safe character thresholds.
-- **Compaction Nodes**: If the original session was compacted by OpenCode's `/compact`, the plugin seamlessly inherits and displays the system compaction summary.
 
-### 4. Two-Tier Cursor-Based Pagination
-Supports OpenCode's native opaque pagination cursors (`cursor.next` / `cursor.previous`). Sorting and pagination parameters are cleanly isolated to ensure zero-conflict pagination across historical sessions.
+Many third-party plugins attempt to summarize prior sessions by calling a secondary LLM. That approach introduces significant latency, incurs extra token bills, and risks hallucinating technical details or dropping subtle constraints.
+
+`opencode-session-reader` employs a **deterministic, rule-based local dehydrator**:
+- **Tool Outputs**: Replaced with clean status badges: `[Tool: <name> (<status>)]`. If a tool failed, a compact error snippet (up to 200 characters) is appended. Raw megabyte logs and stdout dumps are completely eliminated.
+- **User Prompts**: Preserved verbatim to guarantee that original user intent, edge-case constraints, and business requirements remain completely intact.
+- **Assistant Conclusions**: Text blocks are cleanly extracted and bounded with safe character thresholds (up to 1,500 characters per block).
+- **Compaction Nodes**: If the original session was compacted by OpenCode's `/compact`, the plugin seamlessly inherits and renders the system compaction summary (`### Compaction summary`).
+- **Zero Hallucinations**: Because no secondary LLM is invoked during dehydration, every output is 100% faithful to the actual event history.
+
+### 4. Two-Tier Cursor-Based Pagination Isolation
+
+The plugin leverages OpenCode's native opaque base64 cursors (`previous` and `next`). Sorting parameters (`order: asc | desc`) and pagination cursors are cleanly isolated:
+- Requesting an explicit cursor automatically defers ordering to the cursor state.
+- Chronological (`asc`) and reverse-chronological (`desc`) directions are handled safely without infinite loops or duplicate page boundaries.
 
 ---
 
-## 🛠 Tools Exposed to Agents
+## Mermaid Architecture Workflow
 
-When this plugin is loaded, OpenCode automatically injects the following three tools into the agent's catalog:
+The following diagram illustrates how an agent interacts with `opencode-session-reader`, the local dehydration engine, and the underlying OpenCode V2 daemon:
+
+```mermaid
+flowchart TD
+    subgraph AgentSpace["OpenCode Agent & LLM Workspace"]
+        Agent["Autonomous Agent / LLM"]
+    end
+
+    subgraph ExposedTools["Exposed Plugin Tools"]
+        T1["session_list"]
+        T2["session_read"]
+        T3["session_diff"]
+    end
+
+    subgraph ReadModes["session_read Modes"]
+        M1["mode='summary'<br/>Active Context / Recent Turns"]
+        M2["mode='recent'<br/>Chronological Recent Messages"]
+        M3["mode='slice'<br/>Two-Tier Cursor Pagination"]
+        M4["mode='diff'<br/>Direct Patch View"]
+    end
+
+    subgraph Engine["Local Dehydration Engine (Rule-Based)"]
+        D1["Parse Chronological Turns"]
+        D2["Preserve Exact User Prompts"]
+        D3["Replace Tool Payloads with Badges<br/>[Tool: name (status)]"]
+        D4["Bound Assistant Text (<= 1500 chars)"]
+        D5["Inherit Compaction Summaries"]
+        D6["Zero LLM Overhead / No Hallucinations"]
+    end
+
+    subgraph Daemon["OpenCode V2 Daemon (HTTP/REST API)"]
+        API1["GET /api/session<br/>Metadata Query"]
+        API2["GET /api/session/:id<br/>Session Info"]
+        API3["GET /api/session/:id/context<br/>Active Context"]
+        API4["GET /api/session/:id/message<br/>History Pages"]
+        API5["GET /api/session/:id/diff<br/>File Diffs"]
+    end
+
+    Agent -->|"1. Discover Sessions"| T1
+    Agent -->|"2. Progressive Inspection"| T2
+    Agent -->|"3. Inspect Code Patches"| T3
+
+    T1 --> API1
+    T3 --> API5
+
+    T2 --> M1
+    T2 --> M2
+    T2 --> M3
+    T2 --> M4
+
+    M1 --> API2 & API3
+    M2 --> API2 & API4
+    M3 --> API2 & API4
+    M4 --> API5
+
+    API3 --> Engine
+    API4 --> Engine
+    Engine -->|"Dehydrated Prompt-Led Markdown"| Agent
+    API1 -->|"Lightweight Session Metadata JSON"| Agent
+    API5 -->|"Bounded Unified Diff Patch"| Agent
+```
+
+---
+
+## Tools Exposed to Agents
+
+When this plugin is loaded, OpenCode automatically registers three tools into the agent's catalog:
 
 ### 1. `session_list`
 
-Discover and filter historical OpenCode sessions across projects or within the current workspace.
+Discovers and filters historical OpenCode sessions across workspaces or within the current project.
 
-**Parameters:**
+#### Parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `search` | `string` | `undefined` | Substring keyword to search within session titles. |
-| `directory` | `string` | Current workspace | Explicit workspace directory to filter sessions. |
+| `search` | `string` | `undefined` | Substring keyword to search within session titles. When set, searches across all directories by default. |
+| `directory` | `string` | Current workspace | Explicit workspace directory to filter sessions. Overrides the default workspace directory. |
 | `all` | `boolean` | `false` | When `true`, searches sessions across all projects on this machine. |
-| `limit` | `number` | `20` | Max sessions to return per page (1–100). |
-| `order` | `"asc" \| "desc"` | `"desc"` | Sort by update time (newest first by default). |
-| `cursor` | `string` | `undefined` | Opaque pagination cursor for next/previous pages. |
+| `limit` | `number` | `20` | Maximum number of sessions to return per page (1–100). |
+| `order` | `"asc" \| "desc"` | `"desc"` | Sort by session update time (newest first by default). Ignored if `cursor` is provided. |
+| `cursor` | `string` | `undefined` | Opaque base64 pagination cursor returned from a previous query for navigating next/previous pages. |
 
-**Example Agent Usage:**
+#### Return Value
+
+Returns a formatted JSON array of session descriptors followed by opaque pagination metadata:
+```json
+[
+  {
+    "id": "ses_01j9b2x3k4m5n6p7q8r9s0t1u2",
+    "title": "Refactor database migration pipeline",
+    "directory": "/home/user/projects/backend",
+    "parentID": undefined,
+    "updated": 1718000000000
+  }
+]
+
+Pagination: {"next": "eyJvZmZzZXQiOjIwfQ==", "previous": null}
+```
+
+#### Example Usage
+
 ```json
 {
   "search": "database migration",
-  "limit": 10
+  "limit": 10,
+  "all": true
 }
 ```
 
@@ -128,45 +232,96 @@ Discover and filter historical OpenCode sessions across projects or within the c
 
 ### 2. `session_read`
 
-Read compact session turns with automatic dehydration and context protection.
+Reads compact conversational turns from a target session with automatic dehydration and context protection.
 
-**Parameters:**
+#### Parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `sessionID` | `string` | **Required** | The target session ID (e.g. `ses_xxxx`). |
-| `mode` | `"summary" \| "recent" \| "slice" \| "diff"` | `"summary"` | Reading mode (see below). |
-| `limit` | `number` | Mode default | Maximum messages / turns to retrieve. |
-| `cursor` | `string` | `undefined` | Pagination cursor returned from a previous read. |
-| `order` | `"asc" \| "desc"` | Mode default | Chronological (`asc`) or reverse (`desc`) ordering. |
-| `type` | `string` | `undefined` | Optional message type filter (e.g. `user`, `assistant`). |
+| `mode` | `"summary" \| "recent" \| "slice" \| "diff"` | `"summary"` | Reading mode governing which messages are fetched and how they are structured. |
+| `limit` | `number` | Mode default | Maximum messages to retrieve (default: `12` for `summary`, `20` for `recent` and `slice`). |
+| `cursor` | `string` | `undefined` | Opaque base64 pagination cursor returned from a previous read. |
+| `order` | `"asc" \| "desc"` | Mode default | Sort order (`"asc"` for chronological, `"desc"` for reverse). Default: `"asc"` for `slice`, `"desc"` for `recent`. Ignored when `cursor` is present. |
+| `type` | `string` | `undefined` | Optional message type filter (e.g. `"user"`, `"assistant"`) for `recent` and `slice` modes. |
 
-**Modes Explained:**
-- **`summary` (Default)**: Fetches the active working context of the session (after the latest compaction), dehydrates tool output, and returns prompt-led turns.
-- **`recent`**: Retrieves the newest conversational turns in chronological order.
-- **`slice`**: Pages through historical messages using pagination cursors without flooding memory.
-- **`diff`**: Quick shorthand to inspect file changes created during the session.
+#### Modes Explained
+
+- **`summary` (Default)**: Fetches the active working context of the session (messages after the latest compaction boundary, taking the last 12 messages by default). Formats turns in chronological order with prompt-led grouping and collapsed tool badges.
+- **`recent`**: Retrieves the latest conversational turns in chronological order (fetches descending from daemon, then safely reverses for turn analysis).
+- **`slice`**: Pages through historical messages using pagination cursors without flooding context. Ideal for deep inspection of a specific historical interaction.
+- **`diff`**: Quick shorthand that delegates to the diff engine, returning all file modifications made in the session.
+
+#### Example Usage
+
+```json
+{
+  "sessionID": "ses_01j9b2x3k4m5n6p7q8r9s0t1u2",
+  "mode": "summary",
+  "limit": 12
+}
+```
+
+#### Output Structure
+
+Dehydrated sessions are structured into prompt-led turns:
+```markdown
+# Refactor database migration pipeline
+
+Session: ses_01j9b2x3k4m5n6p7q8r9s0t1u2
+Directory: /home/user/projects/backend
+
+## Turn 1
+
+### User
+
+Please migrate the users table to add a uuid column and update the index.
+
+### Assistant
+
+[Tool: read (completed)]
+
+I have inspected schema.prisma. Adding the uuid column now.
+
+[Tool: edit (completed)]
+
+Database migration file generated and applied successfully.
+```
 
 ---
 
 ### 3. `session_diff`
 
-Inspect file diffs and patches produced in a session without reading chat text.
+Inspects file diffs and patches produced during a session without reading conversation text.
 
-**Parameters:**
+#### Parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `sessionID` | `string` | **Required** | Target session ID. |
-| `file` | `string` | `undefined` | Optional single file path filter. |
+| `sessionID` | `string` | **Required** | Target session ID (e.g. `ses_xxxx`). |
+| `file` | `string` | `undefined` | Optional relative file path filter. When provided, returns the diff only for that specific file. |
+
+#### Safety Guarantees
+
+- **24,000-Character Upper Bound**: Output is bounded to 24,000 characters to prevent mega-diffs from blowing up the context window.
+- **Dynamic Fence Escaping**: Code fences dynamically adjust length to ensure embedded backticks in diff content never prematurely terminate Markdown formatting blocks.
+
+#### Example Usage
+
+```json
+{
+  "sessionID": "ses_01j9b2x3k4m5n6p7q8r9s0t1u2",
+  "file": "src/client.ts"
+}
+```
 
 ---
 
-## 📦 Installation & Setup
+## Installation & Setup
 
 ### Option 1: Via npm (Recommended)
 
-Add `opencode-session-reader` to your global or project `opencode.json`:
+Add `opencode-session-reader@0.1.0` directly to your global or project-level `opencode.json` configuration file:
 
 ```json
 {
@@ -177,9 +332,11 @@ Add `opencode-session-reader` to your global or project `opencode.json`:
 }
 ```
 
+When OpenCode starts, it will automatically resolve, install, and initialize the plugin.
+
 ### Option 2: Local Development Link
 
-Clone the repository and build the distribution:
+For local plugin development or customization, clone the repository and build the distribution bundle:
 
 ```bash
 git clone https://github.com/zjm54321/opencode-session-reader.git
@@ -188,7 +345,7 @@ bun install
 bun run build
 ```
 
-Then reference the built output directory in `opencode.json`:
+Then reference the built distribution directory via a file URL in `opencode.json`:
 
 ```json
 {
@@ -200,35 +357,39 @@ Then reference the built output directory in `opencode.json`:
 
 ---
 
-## 🧪 Development & Verification
+## Development & Testing
 
-This project is built using [Bun](https://bun.sh) and [Nix Flakes](https://nixos.org).
+This project is built using [Bun](https://bun.sh) and optionally managed via [Nix Flakes](https://nixos.org).
+
+### Development Commands
 
 ```bash
-# 1. Enter the reproducible Nix environment
+# 1. Enter the reproducible Nix development environment (optional)
 nix develop
 
 # 2. Install dependencies
 bun install
 
-# 3. Run unit and integration tests (17 tests)
+# 3. Run unit and integration tests
 bun test
 
-# 4. Strict TypeScript typechecking
+# 4. Run strict TypeScript typecheck
 bun run typecheck
 
 # 5. Build distribution bundle
 bun run build
 ```
 
-### Automated Tests Overview
+### Automated Test Suite
 
-- `tests/dehydrate.test.ts`: Verifies rule-based dehydration, prompt preservation, tool badge collapsing, and long-text truncation.
-- `tests/client.test.ts`: Verifies API parameter encoding, credential loading, timeout guards, and error formatting.
-- `tests/integration.test.ts`: Live integration against a running OpenCode daemon verifying `session_list`, `session_read`, `session_diff`, and cursor continuation.
+The test suite consists of 17 automated tests covering the entire architecture:
+
+- `tests/dehydrate.test.ts`: Verifies rule-based dehydration, user prompt preservation, tool badge collapsing, assistant text boundary enforcement (1,500 characters), compaction summary inheritance, and shell exit code handling.
+- `tests/client.test.ts`: Verifies REST API query string serialization, credential reading from `~/.config/opencode/service.json`, timeout abort controllers, password redaction in error messages, and error diagnostics.
+- `tests/integration.test.ts`: Live end-to-end integration against a running OpenCode daemon verifying `session_list`, `session_read` modes (`summary`, `recent`, `slice`, `diff`), `session_diff`, and cursor pagination continuation.
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the **GNU General Public License v3.0 or later** ([GPL-3.0-or-later](LICENSE)).
