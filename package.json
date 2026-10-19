@@ -1,0 +1,46 @@
+{
+  "name": "opencode-session-reader",
+  "version": "0.1.0",
+  "description": "Native OpenCode V2 plugin for cross-session discovery, inspection, and context resumption, inspired by Codex thread architecture.",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zjm54321/opencode-session-reader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zjm54321/opencode-session-reader/issues"
+  },
+  "homepage": "https://github.com/zjm54321/opencode-session-reader#readme",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./source": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bun build src/index.ts --target=node --outdir=dist --external @opencode/plugin && cp package.dist.json dist/package.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.32",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "@types/node": "^26.6.5",
+    "typescript": "7.0.2"
+  }
+}
