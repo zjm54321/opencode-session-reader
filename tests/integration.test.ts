@@ -56,6 +56,29 @@ test("live integration with OpenCode background service", async () => {
   expect(diffResult.content).toBeDefined();
   console.log("Live session_diff returned:", diffResult.content.slice(0, 100));
 
+  // 5. Test session_read in slice mode with cursor pagination
+  const slice1 = await tools.session_read.execute({
+    sessionID: targetId,
+    mode: "slice",
+    type: "user",
+    order: "asc",
+    limit: 2,
+  });
+  expect(slice1.content).toBeDefined();
+  expect(slice1.metadata?.cursor).toBeDefined();
+  if (slice1.metadata?.cursor?.next) {
+    console.log("Testing cursor continuation with cursor.next...");
+    const slice2 = await tools.session_read.execute({
+      sessionID: targetId,
+      mode: "slice",
+      type: "user",
+      cursor: slice1.metadata.cursor.next,
+      limit: 2,
+    });
+    expect(slice2.content).toBeDefined();
+    console.log("Cursor continuation succeeded! Length:", slice2.content.length);
+  }
+
   if (typeof cleanup === "function") {
     await cleanup();
   }

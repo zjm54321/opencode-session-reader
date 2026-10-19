@@ -47,7 +47,7 @@ export default Plugin.define({
             search: input.search,
             directory: input.directory ?? (input.all || input.search !== undefined ? undefined : ctx.location.directory),
             limit: input.limit ?? 20,
-            order: input.order ?? "desc",
+            order: input.cursor ? undefined : (input.order ?? "desc"),
             cursor: input.cursor,
           });
           const sessions = result.data.map(session => ({
@@ -82,15 +82,23 @@ export default Plugin.define({
             const omitted = context.length > count ? `\n\nShowing the last ${messages.length} of ${context.length} active-context messages.` : "";
             return { content: `${sessionHeader(session)}${omitted}\n\n${dehydrate(messages) || "No conversation messages."}` };
           }
+          const requestedOrder = input.cursor ? undefined : (input.mode === "recent" ? "desc" : input.order ?? "asc");
           const result = await client.getSessionMessages({
             sessionID: input.sessionID,
             limit: input.limit ?? 20,
-            order: input.mode === "recent" ? "desc" : input.order ?? "asc",
+            order: requestedOrder,
             cursor: input.cursor,
             type: input.type,
           });
           // Pages retain API ordering; reverse descending pages for prompt-led turn parsing.
-          const descending = input.mode === "recent" || input.order === "desc";
+          let descending = input.mode === "recent" || input.order === "desc";
+          if (input.cursor) {
+            try {
+              const decoded = JSON.parse(Buffer.from(input.cursor, "base64").toString("utf-8"));
+              if (decoded.order === "desc") descending = true;
+              else if (decoded.order === "asc") descending = false;
+            } catch {}
+          }
           const messages = descending ? [...result.data].reverse() : result.data;
           return {
             content: `${sessionHeader(session)}\n\n${dehydrate(messages) || "No conversation messages."}${pagination(result.cursor)}`,
